@@ -11,7 +11,12 @@ import {
 import {getCacheVersion} from '../src/internal/cacheUtils'
 import {CompressionMethod} from '../src/internal/constants'
 import * as requestUtils from '../src/internal/requestUtils'
-import {configureS3Cache} from '../src/cache'
+import {
+  configureS3Cache,
+  getS3CacheObjectKey,
+  registerS3CacheDownload,
+  registerS3CacheUpload
+} from '../src/internal/s3CacheConfig'
 import {HttpClientError} from '@actions/http-client'
 
 test('getCacheVersion does not mutate arguments', async () => {
@@ -128,6 +133,11 @@ function configureCache(): void {
 
 test('downloadCache downloads the configured S3 object', async () => {
   configureCache()
+  const cacheIdentity = {
+    key: 'cache-key',
+    version: 'cache-version'
+  }
+  registerS3CacheDownload('https://ignored.example.test/cache', cacheIdentity)
   const archivePath = path.join(os.tmpdir(), `cache-${Date.now()}`)
   const sendMock = jest
     .spyOn(S3Client.prototype, 'send')
@@ -141,7 +151,10 @@ test('downloadCache downloads the configured S3 object', async () => {
 
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        input: {Bucket: 'cache-bucket', Key: 'cache/archive.tzst'}
+        input: {
+          Bucket: 'cache-bucket',
+          Key: getS3CacheObjectKey(cacheIdentity)
+        }
       })
     )
     expect(sendMock.mock.calls[0][0]).toBeInstanceOf(GetObjectCommand)
@@ -153,6 +166,11 @@ test('downloadCache downloads the configured S3 object', async () => {
 
 test('saveCache uploads to the configured S3 object', async () => {
   configureCache()
+  const cacheIdentity = {
+    key: 'cache-key',
+    version: 'cache-version'
+  }
+  registerS3CacheUpload(1, 'legacy-signature', cacheIdentity)
   const archivePath = path.join(os.tmpdir(), `cache-${Date.now()}`)
   fs.writeFileSync(archivePath, 'cache content')
   const sendMock = jest
@@ -166,7 +184,7 @@ test('saveCache uploads to the configured S3 object', async () => {
       expect.objectContaining({
         input: expect.objectContaining({
           Bucket: 'cache-bucket',
-          Key: 'cache/archive.tzst'
+          Key: getS3CacheObjectKey(cacheIdentity)
         })
       })
     )
@@ -174,4 +192,12 @@ test('saveCache uploads to the configured S3 object', async () => {
   } finally {
     await fs.promises.rm(archivePath, {force: true})
   }
+})
+
+test('S3 cache object keys are unique to each cache identity', () => {
+  configureCache()
+
+  expect(getS3CacheObjectKey({key: 'cache-a', version: 'version'})).not.toBe(
+    getS3CacheObjectKey({key: 'cache-b', version: 'version'})
+  )
 })
