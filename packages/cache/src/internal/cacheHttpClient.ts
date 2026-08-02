@@ -24,7 +24,14 @@ import {isSuccessStatusCode, retryTypedResponse} from './requestUtils.js'
 import {getCacheServiceURL} from './config.js'
 import {CacheReadDeniedMessagePrefix} from './constants.js'
 import {getUserAgentString} from './shared/user-agent.js'
-import {getS3CacheConfiguration} from './s3CacheConfig.js'
+import {
+  getS3CacheConfiguration,
+  getS3CacheDownloadIdentity,
+  getS3CacheObjectKey,
+  getS3CacheUploadIdentity,
+  registerS3CacheDownload,
+  registerS3CacheUpload
+} from './s3CacheConfig.js'
 
 function getCacheApiUrl(resource: string): string {
   const baseUrl: string = getCacheServiceURL()
@@ -106,6 +113,12 @@ export async function getCacheEntry(
     throw new Error('Cache not found.')
   }
   core.setSecret(cacheDownloadUrl)
+  if (cacheResult.cacheKey && cacheResult.cacheVersion) {
+    registerS3CacheDownload(cacheDownloadUrl, {
+      key: cacheResult.cacheKey,
+      version: cacheResult.cacheVersion
+    })
+  }
   core.debug(`Cache Result:`)
   core.debug(JSON.stringify(cacheResult))
 
@@ -142,14 +155,16 @@ export async function downloadCache(
   archivePath: string,
   _options?: DownloadOptions
 ): Promise<void> {
-  void archiveLocation
   void _options
-  const {bucket, objectKey, s3ClientConfig} = getS3CacheConfiguration()
+  const {bucket, s3ClientConfig} = getS3CacheConfiguration()
   const client = new S3Client(s3ClientConfig)
 
   try {
     const response = await client.send(
-      new GetObjectCommand({Bucket: bucket, Key: objectKey})
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: getS3CacheObjectKey(getS3CacheDownloadIdentity(archiveLocation))
+      })
     )
     if (!(response.Body instanceof stream.Readable)) {
       throw new Error(
@@ -190,6 +205,9 @@ export async function reserveCache(
       reserveCacheRequest
     )
   )
+  if (response.result?.cacheId) {
+    registerS3CacheUpload(response.result.cacheId, '', {key, version})
+  }
   return response
 }
 
@@ -214,7 +232,7 @@ export async function saveCache(
   options?: UploadOptions
 ): Promise<void> {
   void options
-  const {bucket, objectKey, s3ClientConfig} = getS3CacheConfiguration()
+  const {bucket, s3ClientConfig} = getS3CacheConfiguration()
   const client = new S3Client(s3ClientConfig)
 
   try {
@@ -222,7 +240,9 @@ export async function saveCache(
     await client.send(
       new PutObjectCommand({
         Bucket: bucket,
-        Key: objectKey,
+        Key: getS3CacheObjectKey(
+          getS3CacheUploadIdentity(cacheId, signedUploadUrl)
+        ),
         Body: fs.createReadStream(archivePath)
       })
     )

@@ -20,6 +20,10 @@ import {
 } from './generated/results/api/v1/cache.js'
 import {HttpClientError} from '@actions/http-client'
 import {CacheReadDeniedMessagePrefix} from './internal/constants.js'
+import {
+  registerS3CacheDownload,
+  registerS3CacheUpload
+} from './internal/s3CacheConfig.js'
 export {
   configureS3Cache,
   type S3CacheConfiguration
@@ -405,6 +409,10 @@ async function restoreCacheV2(
     )
     core.debug(`Archive path: ${archivePath}`)
     core.debug(`Starting download of archive to: ${archivePath}`)
+    registerS3CacheDownload(response.signedDownloadUrl, {
+      key: response.matchedKey,
+      version: request.version
+    })
 
     await cacheHttpClient.downloadCache(
       response.signedDownloadUrl,
@@ -710,6 +718,7 @@ async function saveCacheV2(
         throw new Error(response.message || 'Response was not ok')
       }
       signedUploadUrl = response.signedUploadUrl
+      registerS3CacheUpload(cacheId, signedUploadUrl, {key, version})
     } catch (error) {
       core.debug(`Failed to reserve cache: ${error}`)
       const errorMessage = (error as Error)?.message ?? ''
